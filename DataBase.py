@@ -1,65 +1,45 @@
-import pymysql.cursors
-import tkinter.messagebox
-class DataBase:
-    def __init__(self, db, tb):
-        self.name_db = db
-        self.name_tb = tb
+import numpy as np
+import os
+from pymongo import MongoClient
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
+import xgboost as xgb
 
-    def check_db(self):
-        try:
-            conn = pymysql.connect(host="localhost",
-                                   user="root",
-                                   password="root",
-                                   database=self.name_db,
-                                   cursorclass=pymysql.cursors.Cursor)
-            print("Вы подключились")
-            tkinter.messagebox.showinfo("Вы подключились", self.name_db)
-        except pymysql.err.MySQLError:
-            conn = pymysql.connect(host="localhost",
-                                   user="root",
-                                   password="root",
-                                   cursorclass=pymysql.cursors.Cursor)
 
-            cursor = conn.cursor()
-            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {self.name_db}")
-            print("Вы создали БД")
-            tkinter.messagebox.showinfo("Вы создали БД", self.name_db)
-        return conn
+def load_and_prepare_data_mongo():
+    client = MongoClient('localhost', 27017)
+    db = client.housing_data
+    collection = db.california_housing
 
-    def con_db(self):
-        return pymysql.connect(host="localhost",
-                               user="root",
-                               password="root",
-                               database=self.name_db,
-                               cursorclass=pymysql.cursors.Cursor)
+    cursor = collection.find({})
+    df = pd.DataFrame(list(cursor))
 
-    def check_table(self):
-        connection = self.con_db()
-        cursor = connection.cursor()
-        try:
-            cursor.execute(f"SELECT * FROM {self.name_db}")
-            print("Таблица подключена")
-            tkinter.messagebox.showinfo("Таблица подключена", self.name_tb)
-        except pymysql.err.MySQLError:
+    features = df[['longitude', 'latitude', 'housing_median_age', 'total_rooms', 'total_bedrooms']].values  # Замените названия столбцов на реальные признаки из нового датасета
+    target = df['median_house_value'].values
 
-            cursor.execute(
-                f"CREATE TABLE IF NOT EXISTS {self.name_tb} (id bigint NOT NULL AUTO_INCREMENT,"
-                f" list varchar(1000) NOT NULL,"
-                f"indexi varchar(1000) NOT NULL,"
-                f" PRIMARY KEY (id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
-        connection.commit()
-        print("Таблица создана и подключена")
-        tkinter.messagebox.showinfo("Таблица создана и подключена", self.name_tb)
-        return
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    features_scaled = scaler.fit_transform(features)
 
-    def list_tb(self):
-        connection = self.con_db()
-        cursor = connection.cursor()
-        tb_in_db = "SHOW TABLES;"
-        cursor.execute(tb_in_db)
-        tables = cursor.fetchall()
+    return features_scaled, target
 
-        table_list = [table[0] for table in tables]
-        table_list_str = "\n".join(table_list)
 
-        tkinter.messagebox.showinfo("Список таблиц", table_list_str)
+def train_xgboost():
+    X, y = load_and_prepare_data_mongo()
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    model = xgb.XGBRegressor(n_estimators=100, learning_rate=0.08, gamma=0, subsample=0.75, colsample_bytree=1,
+                             max_depth=7)
+    model.fit(X_train, y_train)
+
+    model_dir = 'mymodel_mongo'
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+
+    model.save_model(f'{model_dir}/my_xgb_model.json')
+
+    print("Модель успешно обучена и сохранена.")
+
+
+if __name__ == '__main__':
+    train_xgboost()
